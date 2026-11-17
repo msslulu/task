@@ -10,6 +10,24 @@
 	"observability": {
 		"enabled": true
 	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "task-app-db",
+			"migrations_dir": "drizzle"
+		},
+		{
+			"binding": "my_database",
+			"database_name": "my-database",
+			"database_id": "177ff1ec-d105-45b2-8702-7bb624cc6e70",
+			"remote": true
+		}
+	],
+	"assets": {
+		"directory": "./dist/client",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application"
+	},
 	"triggers": {
 		"crons": [
 			"* * * * *"

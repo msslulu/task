@@ -1,40 +1,110 @@
-/**
- * Welcome to Cloudflare Workers!
- *
- * This is a template for a Scheduled Worker: a Worker that can run on a
- * configurable interval:
- * https://developers.cloudflare.com/workers/platform/triggers/cron-triggers/
- *
- * - Run `npm run dev` in your terminal to start a development server
- * - Run `curl "http://localhost:8787/__scheduled?cron=*+*+*+*+*"` to see your Worker in action
- * - Run `npm run deploy` to publish your Worker
- *
- * Bind resources to your Worker in `wrangler.jsonc`. After adding bindings, a type definition for the
- * `Env` object can be regenerated with `npm run cf-typegen`.
- *
- * Learn more at https://developers.cloudflare.com/workers/
- */
+import { desc, eq } from 'drizzle-orm';
+import { Hono } from 'hono';
+
+import { createDb } from './db';
+import { tasks } from './db/schema';
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get('/health', (c) => c.json({ status: 'ok' }));
+
+app.get('/api/tasks', async (c) => {
+	const db = createDb(c.env.DB);
+	const result = await db.select().from(tasks).orderBy(desc(tasks.createdAt)).all();
+
+	return c.json({ data: result });
+});
+
+app.post('/api/tasks', async (c) => {
+	const body = await c.req.json<{ title?: unknown }>().catch(() => null);
+	const title = typeof body?.title === 'string' ? body.title.trim() : '';
+
+	if (!title) {
+		return c.json({ error: 'The title field is required.' }, 400);
+	}
+
+	const now = new Date();
+	const db = createDb(c.env.DB);
+	const [task] = await db
+		.insert(tasks)
+		.values({ title, createdAt: now, updatedAt: now })
+		.returning()
+		.all();
+
+	return c.json({ data: task }, 201);
+});
+
+app.patch('/api/tasks/:id', async (c) => {
+	const id = Number(c.req.param('id'));
+	const body = await c.req.json<{ title?: unknown; completed?: unknown }>().catch(() => null);
+	const hasTitle = typeof body === 'object' && body !== null && 'title' in body;
+	const hasCompleted = typeof body === 'object' && body !== null && 'completed' in body;
+	const title = typeof body?.title === 'string' ? body.title.trim() : undefined;
+	const completed = typeof body?.completed === 'boolean' ? body.completed : undefined;
+
+	if (
+		!Number.isInteger(id) ||
+		(!hasTitle && !hasCompleted) ||
+		(hasTitle && !title) ||
+		(hasTitle && typeof body?.title !== 'string') ||
+		(hasCompleted && typeof body?.completed !== 'boolean')
+	) {
+		return c.json({ error: 'Provide a non-empty title or a boolean completed field.' }, 400);
+	}
+
+	const db = createDb(c.env.DB);
+	const updates = {
+		...(hasTitle ? { title } : {}),
+		...(hasCompleted ? { completed } : {}),
+		updatedAt: new Date(),
+	};
+	const [task] = await db
+		.update(tasks)
+		.set(updates)
+		.where(eq(tasks.id, id))
+		.returning()
+		.all();
+
+	if (!task) {
+		return c.json({ error: 'Task not found.' }, 404);
+	}
+
+	return c.json({ data: task });
+});
+
+app.delete('/api/tasks/:id', async (c) => {
+	const id = Number(c.req.param('id'));
+
+	if (!Number.isInteger(id)) {
+		return c.json({ error: 'A valid task id is required.' }, 400);
+	}
+
+	const db = createDb(c.env.DB);
+	const [deletedTask] = await db.delete(tasks).where(eq(tasks.id, id)).returning({ id: tasks.id }).all();
+
+	if (!deletedTask) {
+		return c.json({ error: 'Task not found.' }, 404);
+	}
+
+	return c.json({ data: deletedTask });
+});
+
+app.all('*', (c) => {
+	if (c.req.path.startsWith('/api/')) {
+		return c.notFound();
+	}
+
+	return c.env.ASSETS.fetch(c.req.raw);
+});
 
 export default {
-	async fetch(req) {
-		const url = new URL(req.url);
-		url.pathname = '/__scheduled';
-		url.searchParams.append('cron', '* * * * *');
-		return new Response(`To test the scheduled handler, ensure you have used the "--test-scheduled" then try running "curl ${url.href}".`);
-	},
+	fetch: app.fetch,
 
-	// The scheduled handler is invoked at the interval set in our wrangler.jsonc's
-	// [[triggers]] configuration.
-	async scheduled(event, env, ctx): Promise<void> {
-		// A Cron Trigger can make requests to other endpoints on the Internet,
-		// publish to a Queue, query a D1 Database, and much more.
-		//
-		// We'll keep it simple and make an API call to a Cloudflare API:
-		let resp = await fetch('https://api.cloudflare.com/client/v4/ips');
-		let wasSuccessful = resp.ok ? 'success' : 'fail';
+	// Keep the scheduled handler alongside the Hono HTTP application.
+	async scheduled(event): Promise<void> {
+		const resp = await fetch('https://api.cloudflare.com/client/v4/ips');
+		const wasSuccessful = resp.ok ? 'success' : 'fail';
 
-		// You could store this result in KV, write to a D1 Database, or publish to a Queue.
-		// In this template, we'll just log the result:
 		console.log(`trigger fired at ${event.cron}: ${wasSuccessful}`);
 	},
 } satisfies ExportedHandler<Env>;
