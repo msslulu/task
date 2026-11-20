@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "deploy": "npm run build && wrangler deploy",
+    "deploy": "npm run build && npm run db:migrate:remote && wrangler deploy",
     "dev": "wrangler dev --test-scheduled --persist-to .wrangler-local",
     "dev:client": "vite",
     "start": "wrangler dev --test-scheduled --persist-to .wrangler-local",

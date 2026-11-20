@@ -8,6 +8,24 @@ const app = new Hono<{ Bindings: Env }>();
 
 app.get('/health', (c) => c.json({ status: 'ok' }));
 
+app.get('/health/db', async (c) => {
+	try {
+		const table = await c.env.DB
+			.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'")
+			.first<{ name: string }>();
+
+		if (!table) {
+			console.error('D1 health check failed: tasks table is missing');
+			return c.json({ status: 'error', error: 'The tasks table is missing.' }, 503);
+		}
+
+		return c.json({ status: 'ok', database: 'task-app-db', table: 'tasks' });
+	} catch (error) {
+		console.error('D1 health check failed', error);
+		return c.json({ status: 'error', error: 'The database is unavailable.' }, 503);
+	}
+});
+
 app.get('/api/tasks', async (c) => {
 	const db = createDb(c.env.DB);
 	const result = await db.select().from(tasks).orderBy(desc(tasks.createdAt)).all();
@@ -95,6 +113,20 @@ app.all('*', (c) => {
 	}
 
 	return c.env.ASSETS.fetch(c.req.raw);
+});
+
+app.onError((error, c) => {
+	console.error('Unhandled request error', {
+		method: c.req.method,
+		path: c.req.path,
+		message: error instanceof Error ? error.message : String(error),
+	});
+
+	if (c.req.path.startsWith('/api/')) {
+		return c.json({ error: 'Internal server error.' }, 500);
+	}
+
+	return c.text('Internal Server Error', 500);
 });
 
 export default {
