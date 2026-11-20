@@ -17,6 +17,11 @@ type SingleTaskResponse = {
 	data: Task;
 };
 
+type User = {
+	id: number;
+	email: string;
+};
+
 type Filter = 'all' | 'active' | 'completed';
 
 const tasks = ref<Task[]>([]);
@@ -28,6 +33,11 @@ const busyTaskId = ref<number | null>(null);
 const editingTaskId = ref<number | null>(null);
 const editingTitle = ref('');
 const errorMessage = ref('');
+const currentUser = ref<User | null>(null);
+const authMode = ref<'login' | 'register'>('login');
+const authEmail = ref('');
+const authPassword = ref('');
+const authLoading = ref(false);
 
 const completedCount = computed(() => tasks.value.filter((task) => task.completed).length);
 const activeCount = computed(() => tasks.value.length - completedCount.value);
@@ -54,7 +64,7 @@ const filterLabel = computed(() => {
 });
 
 async function request<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-	const response = await fetch(input, init);
+	const response = await fetch(input, { ...init, credentials: 'same-origin' });
 	const payload = (await response.json().catch(() => null)) as { error?: string } | null;
 
 	if (!response.ok) {
@@ -62,6 +72,49 @@ async function request<T>(input: RequestInfo | URL, init?: RequestInit): Promise
 	}
 
 	return payload as T;
+}
+
+async function loadSession() {
+	try {
+		const response = await request<{ data: User }>('/api/auth/me');
+		currentUser.value = response.data;
+		await loadTasks();
+	} catch {
+		currentUser.value = null;
+		isLoading.value = false;
+	}
+}
+
+async function submitAuth() {
+	const email = authEmail.value.trim();
+	if (!email || !authPassword.value || authLoading.value) return;
+
+	authLoading.value = true;
+	errorMessage.value = '';
+	try {
+		const endpoint = authMode.value === 'login' ? '/api/auth/login' : '/api/auth/register';
+		const response = await request<{ data: User }>(endpoint, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ email, password: authPassword.value }),
+		});
+		currentUser.value = response.data;
+		authPassword.value = '';
+		await loadTasks();
+	} catch (error) {
+		errorMessage.value = error instanceof Error ? error.message : '认证失败，请稍后重试。';
+	} finally {
+		authLoading.value = false;
+	}
+}
+
+async function logout() {
+	await request('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+	currentUser.value = null;
+	tasks.value = [];
+	authEmail.value = '';
+	authPassword.value = '';
+	authMode.value = 'login';
 }
 
 async function loadTasks() {
@@ -184,7 +237,7 @@ function formatDate(value: string) {
 	}).format(new Date(value));
 }
 
-onMounted(loadTasks);
+onMounted(loadSession);
 </script>
 
 <template>
@@ -198,9 +251,35 @@ onMounted(loadTasks);
 					<span class="brand-mark"><span></span><span></span><span></span></span>
 					<span>taskflow</span>
 				</a>
-				<div class="connection-status"><span class="status-dot"></span> API 在线</div>
+				<div v-if="currentUser" class="account-area">
+					<span class="user-email">{{ currentUser.email }}</span>
+					<button class="logout-button" type="button" @click="logout">退出登录</button>
+				</div>
+				<div v-else class="connection-status"><span class="status-dot"></span> 安全登录</div>
 			</header>
 
+			<section v-if="!currentUser" class="auth-card">
+				<div class="auth-copy">
+					<p class="eyebrow">Taskflow Account <span>✦</span></p>
+					<h1>{{ authMode === 'login' ? '欢迎回来，继续完成重要的事。' : '创建账户，开始你的工作节奏。' }}</h1>
+					<p class="hero-copy">登录后，你的任务会安全地保存在自己的账户下。</p>
+				</div>
+				<form class="auth-form" @submit.prevent="submitAuth">
+					<label>邮箱<input v-model="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required /></label>
+					<label>密码<input v-model="authPassword" type="password" :autocomplete="authMode === 'login' ? 'current-password' : 'new-password'" placeholder="至少 8 个字符" minlength="8" required /></label>
+					<button class="auth-submit" type="submit" :disabled="authLoading || !authEmail.trim() || authPassword.length < 8">
+						<span v-if="authLoading" class="spinner"></span>
+						<span v-else>{{ authMode === 'login' ? '登录' : '注册并登录' }}</span>
+					</button>
+					<button class="auth-switch" type="button" @click="authMode = authMode === 'login' ? 'register' : 'login'; errorMessage = ''">
+						{{ authMode === 'login' ? '还没有账户？立即注册' : '已有账户？返回登录' }}
+					</button>
+				</form>
+			</section>
+
+			<div v-if="!currentUser && errorMessage" class="error-message auth-error" role="alert"><span>!</span>{{ errorMessage }}</div>
+
+			<template v-if="currentUser">
 			<section class="hero">
 				<div>
 					<p class="eyebrow">今日工作台 <span>✦</span></p>
@@ -304,6 +383,7 @@ onMounted(loadTasks);
 					</li>
 				</ul>
 			</section>
+			</template>
 
 			<footer class="footer-note">专注当下，持续前进 <span>·</span> Powered by Hono + Vue</footer>
 		</main>

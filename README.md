@@ -21,3 +21,23 @@ Useful checks after deployment:
 /health/db    D1 binding and tasks table check
 /api/tasks    Task list API
 ```
+
+## Authentication
+
+The app provides email/password registration, login, logout and current-user APIs. Authentication uses an HttpOnly session cookie, and task records are isolated by user.
+
+The first deployment after adding authentication must apply the new D1 migration:
+
+```bash
+npm run db:migrate:remote
+npm run deploy
+```
+
+Available endpoints:
+
+```text
+POST /api/auth/register
+POST /api/auth/login
+GET  /api/auth/me
+POST /api/auth/logout
+```
